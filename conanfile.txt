@@ -1,0 +1,4 @@
+[generators]
+cmake
+[requires]
+catch2/3.0.0@catchorg/testing
