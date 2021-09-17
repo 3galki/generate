@@ -23,17 +23,7 @@ public:
                 channel *m_self;
                 void operator << (value_type value) {
                     m_self->m_data.template emplace(std::move(value));
-
-                    while (!m_self->m_out_queue.empty()) {
-                        auto ptr = pop(m_self->m_out_queue);
-                        if (auto coro = ptr.lock(); coro != nullptr && *coro != nullptr) {
-                            task::post([coro = *coro] () mutable {
-                                coro.resume();
-                            });
-                            *coro = nullptr;
-                            break;
-                        }
-                    }
+                    m_self->resume_out();
                 }
             };
             return helper{m_self};
@@ -56,7 +46,7 @@ public:
         void _suspend(std::weak_ptr<handle> c) { m_self->m_out_queue.emplace(c); }
         value_type await_resume() {
             auto value = pop(m_self->m_data);
-            channel::resume(m_self->m_in_queue);
+            m_self->resume_in();
             return std::move(value);
         }
 
@@ -82,9 +72,22 @@ private:
     std::queue<handle> m_in_queue;
     std::queue<std::weak_ptr<handle>> m_out_queue;
 
-    static void resume(std::queue<handle> &queue) {
-        if (!queue.empty()) {
-            task::post([coro = pop(queue)] () mutable { coro.resume(); });
+    void resume_in() {
+        if (!m_in_queue.empty()) {
+            task::post([coro = pop(m_in_queue)] () mutable { coro.resume(); });
+        }
+    }
+
+    void resume_out() {
+        while (!m_out_queue.empty()) {
+            auto ptr = pop(m_out_queue);
+            if (auto coro = ptr.lock(); coro != nullptr && *coro != nullptr) {
+                task::post([coro = *coro] () mutable {
+                    coro.resume();
+                });
+                *coro = nullptr;
+                break;
+            }
         }
     }
 };
