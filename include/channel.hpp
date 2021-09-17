@@ -82,9 +82,7 @@ private:
         while (!m_out_queue.empty()) {
             auto ptr = pop(m_out_queue);
             if (auto coro = ptr.lock(); coro != nullptr && *coro != nullptr) {
-                task::post([coro = *coro] () mutable {
-                    coro.resume();
-                });
+                task::post([coro = *coro] () mutable { coro.resume(); });
                 *coro = nullptr;
                 break;
             }
