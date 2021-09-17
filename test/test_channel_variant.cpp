@@ -48,6 +48,19 @@ task writer_string(channel<std::string>::in in) {
     in.close();
 }
 
+task push_value(channel<int>::in in) {
+    co_await in << 1;
+    co_await in << 1;
+    co_await in << 1;
+    co_await in << 1;
+}
+
+TEST_CASE("push value", "[channel]") {
+    channel<int> channel_int{3};
+    push_value(channel_int);
+    task::run();
+}
+
 TEST_CASE("create", "[simple]") {
     channel<int> channel_int{3};
     channel<std::string> channel_string{3};
