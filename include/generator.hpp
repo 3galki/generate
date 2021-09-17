@@ -98,8 +98,10 @@ private:
     }
 };
 
-template <typename Value> concept generator_type =
-std::is_same_v<std::decay_t<Value>, generator<typename std::decay_t<Value>::value_type>>;
+template <typename Value> concept generator_type = requires {
+    typename std::decay_t<Value>::value_type;
+    std::is_same_v<std::decay_t<Value>, generator<typename std::decay_t<Value>::value_type>>;
+};
 
 template <generator_type Generator, typename Predicate>
 auto operator | (Generator &&source, Predicate predicate) -> std::decay_t<Generator> {
@@ -129,8 +131,12 @@ auto make_generator(Container &&container) -> generator<typename std::decay_t<Co
 }
 
 template <generator_type Generator1, generator_type Generator2>
-auto zip(Generator1 &&source1, Generator2 &&source2) ->
-generator<std::pair<typename std::decay_t<Generator1>::value_type, typename std::decay_t<Generator2>::value_type>>{
+using pair_generator = generator<std::pair<
+        typename std::decay_t<Generator1>::value_type,
+        typename std::decay_t<Generator2>::value_type>>;
+
+template <generator_type Generator1, generator_type Generator2>
+auto zip(Generator1 &&source1, Generator2 &&source2) -> pair_generator<Generator1, Generator1> {
     using Value1 = typename std::decay_t<Generator1>::value_type;
     using Value2 = typename std::decay_t<Generator2>::value_type;
     while (!source1.eof() && !source2.eof()) {
@@ -141,7 +147,10 @@ generator<std::pair<typename std::decay_t<Generator1>::value_type, typename std:
 }
 
 template <generator_type ...Generators>
-generator<std::tuple<typename std::decay_t<Generators>::value_type...>> zip(Generators && ...sources) {
+using tuple_generator = generator<std::tuple<typename std::decay_t<Generators>::value_type...>>;
+
+template <generator_type ...Generators>
+auto zip(Generators && ...sources) -> tuple_generator<Generators...> {
     while ((!sources.eof() && ...)) {
         co_yield std::make_tuple<typename std::decay_t<Generators>::value_type...>(std::move(sources.value())...);
         (sources.next(),...);
