@@ -1,6 +1,7 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch_config.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <channel.hpp>
 #include <generator.hpp>
 #include <iostream>
 
@@ -16,20 +17,7 @@ func test(out1 <-chan int, out2 <-chan string) {
 }
 */
 
-/* Аналог на variant */
-/*
-task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
-    auto result = co_await select(out1, out2);
-    if (auto value = std::get_if<int>(result); value != nullptr) {
-        std::cout << "got int " << *value << std::endl;
-    } else if (auto value = std::get_if<std::string>(result); value != nullptr) {
-        std::cout << "got string " << *value << std::endl;
-    }
-}
-*/
-
 /* Аналог на лямбдах */
-/*
 task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
     co_await select({
         out1 >> [](auto value) {
@@ -40,20 +28,27 @@ task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
         },
     });
 }
-*/
 
-/* "Сложный вариант" */
-/*
-task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
-    auto result = co_await select(out1, out2);
-    if (auto *value = result.get(out1); value != nullptr) {
-        std::cout << "got int " << *value << std::endl;
-    } else if (auto *value = result.get(out2); value != nullptr) {
-        std::cout << "got string " << *value << std::endl;
+task writer_int(channel<int>::in in) {
+    for (int i = 1; i<3; ++i) {
+        co_await in << i;
+        std::cout << "    push int    " << i << std::endl;
     }
+    in.close();
 }
-*/
 
-TEST_CASE("create", "[simple]") {
-    coroutine();
+task writer_string(channel<std::string>::in in) {
+    for (int i = 1; i<3; ++i) {
+        co_await in << std::to_string(i);
+        std::cout << "    push string " << i << std::endl;
+    }
+    in.close();
+}
+
+TEST_CASE("lambda", "[simple]") {
+    channel<int> channel_int{1};
+    channel<std::string> channel_string{1};
+    coroutine(channel_int, channel_string);
+    writer_int(channel_int);
+    writer_string(channel_string);
 }

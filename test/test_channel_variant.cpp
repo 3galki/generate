@@ -48,11 +48,10 @@ task writer_string(channel<std::string>::in in) {
     in.close();
 }
 
-TEST_CASE("create", "[simple]") {
+TEST_CASE("variant", "[simple]") {
     channel<int> channel_int{1};
     channel<std::string> channel_string{1};
     coroutine(channel_int, channel_string);
     writer_int(channel_int);
     writer_string(channel_string);
-    task::run();
 }

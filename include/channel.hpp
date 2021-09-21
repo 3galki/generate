@@ -1,14 +1,25 @@
 #pragma once
 #include <experimental/coroutine>
 #include <queue>
-#include <task.hpp>
 #include <variant>
 
-using handle = std::experimental::coroutine_handle<>;
+template <typename Container>
+auto pop(Container &container) -> typename Container::value_type {
+    auto value = std::move(container.front());
+    container.pop();
+    return std::move(value);
+}
 
-template <typename Type, typename Tasks = task>
+struct default_scheduler {
+    static void post(std::function<void()> callback) {
+        callback();
+    }
+};
+
+template <typename Type, typename Scheduler = default_scheduler>
 class channel {
 public:
+    using handle = std::experimental::coroutine_handle<>;
     using value_type = Type;
 
     class in {
@@ -19,12 +30,21 @@ public:
         bool await_ready() const { return m_self->m_capacity > m_self->m_data.size(); }
         void await_suspend(handle coro) { m_self->m_in_queue.emplace(coro); }
         auto await_resume() {
-            struct helper {
-                channel *m_self;
+            class helper {
+            public:
+                ~helper() { ++m_self->m_capacity; }
                 void operator << (value_type value) {
                     m_self->m_data.template emplace(std::move(value));
                     m_self->resume_out();
                 }
+            private:
+                channel *m_self;
+                helper(channel *self) : m_self{self} { --m_self->m_capacity; };
+                helper(const helper &) = delete;
+                helper & operator = (const helper &) = delete;
+                helper(helper &&) = delete;
+                helper & operator = (helper &&) = delete;
+                friend class in;
             };
             return helper{m_self};
         }
@@ -36,13 +56,9 @@ public:
 
     class out {
     public:
-        std::shared_ptr<handle> coro;
         using value_type = channel::value_type;
         bool await_ready() const { return !m_self->m_data.empty(); }
-        void await_suspend(handle c) {
-            coro = std::make_shared<handle>(c);
-            _suspend(coro);
-        }
+        void await_suspend(handle c) { m_self->m_out_queue.emplace(c); }
         void _suspend(std::weak_ptr<handle> c) { m_self->m_out_queue.emplace(c); }
         value_type await_resume() {
             auto value = pop(m_self->m_data);
@@ -51,10 +67,12 @@ public:
         }
 
         template <size_t Index, typename Variant>
-        void extract(Variant &v) {
-            if (v.index() == 0 && await_ready()) {
+        bool extract(Variant &v) {
+            if (await_ready()) {
                 v.template emplace<Index + 1>(await_resume());
+                return true;
             }
+            return false;
         }
     private:
         explicit out(channel *self) noexcept : m_self{self} {}
@@ -70,20 +88,24 @@ private:
     size_t m_capacity;
     std::queue<value_type> m_data;
     std::queue<handle> m_in_queue;
-    std::queue<std::weak_ptr<handle>> m_out_queue;
+    std::queue<std::variant<handle, std::weak_ptr<handle>>> m_out_queue;
 
     void resume_in() {
         if (!m_in_queue.empty()) {
-            task::post([coro = pop(m_in_queue)] () mutable { coro.resume(); });
+            Scheduler::post([coro = pop(m_in_queue)] () mutable { coro.resume(); });
         }
     }
 
     void resume_out() {
         while (!m_out_queue.empty()) {
             auto ptr = pop(m_out_queue);
-            if (auto coro = ptr.lock(); coro != nullptr && *coro != nullptr) {
-                task::post([coro = *coro] () mutable { coro.resume(); });
+            if (auto coro = std::get_if<handle>(&ptr); coro != nullptr) {
+                coro->resume();
+                break;
+            } else if (auto coro = std::get<std::weak_ptr<handle>>(ptr).lock(); coro != nullptr && *coro != nullptr) {
+                auto c = *coro;
                 *coro = nullptr;
+                Scheduler::post([coro = c] () mutable { coro.resume(); });
                 break;
             }
         }
@@ -92,12 +114,13 @@ private:
 
 template<typename Variant, class Tuple, std::size_t... Is>
 void tuple2variant(Variant &v, Tuple& t, std::index_sequence<Is...>) {
-    (std::get<Is>(t).template extract<Is>(v), ...);
+    (std::get<Is>(t).template extract<Is>(v) || ...);
 }
 
 template <typename ...InChannels>
 auto select(InChannels ...channels) {
     struct [[nodiscard]] awaitable {
+        using handle = std::experimental::coroutine_handle<>;
         std::tuple<InChannels...> channels;
         std::shared_ptr<handle> coro;
         bool await_ready() const {
@@ -112,7 +135,7 @@ auto select(InChannels ...channels) {
             }, channels);
         }
         auto await_resume() {
-            std::variant<std::monostate, typename std::decay_t<InChannels>::value_type...> result;
+            std::variant<std::monostate, typename InChannels::value_type...> result;
             tuple2variant(result, channels, std::index_sequence_for<InChannels...>{});
             return std::move(result);
         }
