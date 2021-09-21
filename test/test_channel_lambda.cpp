@@ -4,6 +4,7 @@
 #include <channel.hpp>
 #include <generator.hpp>
 #include <iostream>
+#include <task.hpp>
 
 /* Оригинал на GoLang */
 /*
@@ -17,20 +18,23 @@ func test(out1 <-chan int, out2 <-chan string) {
 }
 */
 
+namespace {
 /* Аналог на лямбдах */
 task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
-    co_await select({
-        out1 >> [](auto value) {
-            std::cout << "got int " << value << std::endl;
-        },
-        out2 >> [](auto value) {
-            std::cout << "got string " << value << std::endl;
-        },
-    });
+    while (true) {
+        co_await select(
+                out1 >> [](auto value) {
+                    std::cout << "got int " << value << std::endl;
+                },
+                out2 >> [](auto value) {
+                    std::cout << "got string " << value << std::endl;
+                }
+        );
+    }
 }
 
 task writer_int(channel<int>::in in) {
-    for (int i = 1; i<3; ++i) {
+    for (int i = 1; i < 3; ++i) {
         co_await in << i;
         std::cout << "    push int    " << i << std::endl;
     }
@@ -38,12 +42,13 @@ task writer_int(channel<int>::in in) {
 }
 
 task writer_string(channel<std::string>::in in) {
-    for (int i = 1; i<3; ++i) {
+    for (int i = 1; i < 3; ++i) {
         co_await in << std::to_string(i);
         std::cout << "    push string " << i << std::endl;
     }
     in.close();
 }
+} // end of namespace
 
 TEST_CASE("lambda", "[simple]") {
     channel<int> channel_int{1};

@@ -1,4 +1,5 @@
 #pragma once
+#include <concepts>
 #include <experimental/coroutine>
 #include <queue>
 #include <variant>
@@ -69,16 +70,35 @@ public:
         template <size_t Index, typename Variant>
         bool extract(Variant &v) {
             if (await_ready()) {
-                v.template emplace<Index + 1>(await_resume());
+                v.template emplace<Index>(await_resume());
                 return true;
             }
             return false;
+        }
+
+        template <size_t Index, typename Tuple>
+        bool callback(Tuple &v) {
+            if (await_ready()) {
+                std::get<Index>(v).callback(await_resume());
+                return true;
+            }
+            return false;
+        }
+
+        auto operator >> (std::function<void(value_type)> callback) {
+            struct helper {
+                using value_type = channel::value_type;
+                std::function<void(value_type)> callback;
+                typename channel<Type>::out self;
+            };
+            return helper{std::move(callback), *this};
         }
     private:
         explicit out(channel *self) noexcept : m_self{self} {}
         channel *m_self;
         friend class channel;
     };
+
 
     channel(size_t size) noexcept : m_capacity{size} {}
 
@@ -117,11 +137,18 @@ void tuple2variant(Variant &v, Tuple& t, std::index_sequence<Is...>) {
     (std::get<Is>(t).template extract<Is>(v) || ...);
 }
 
-template <typename ...InChannels>
-auto select(InChannels ...channels) {
+template <typename Type>
+concept channel_out = requires(Type T) {
+    typename Type::value_type;
+    std::is_same_v<Type, typename channel<typename Type::value_type>::out>;
+    { T.await_ready() };
+};
+
+template <channel_out ...Channels>
+auto select(Channels ...channels) {
     struct [[nodiscard]] awaitable {
         using handle = std::experimental::coroutine_handle<>;
-        std::tuple<InChannels...> channels;
+        std::tuple<Channels...> channels;
         std::shared_ptr<handle> coro;
         bool await_ready() const {
             return std::apply([](auto & ...values) {
@@ -135,11 +162,40 @@ auto select(InChannels ...channels) {
             }, channels);
         }
         auto await_resume() {
-            std::variant<std::monostate, typename InChannels::value_type...> result;
-            tuple2variant(result, channels, std::index_sequence_for<InChannels...>{});
+            std::variant<typename Channels::value_type...> result;
+            tuple2variant(result, channels, std::index_sequence_for<Channels...>{});
             return std::move(result);
         }
     };
 
     return awaitable{std::make_tuple(channels...)};
+}
+
+template<class Tuple, std::size_t... Is>
+void tuple2callback(Tuple& t, std::index_sequence<Is...>) {
+    (std::get<Is>(t).self.template callback<Is>(t) || ...);
+}
+
+template <typename ...Callbacks>
+auto select(Callbacks ...callbacks) {
+    struct [[nodiscard]] awaitable {
+        using handle = std::experimental::coroutine_handle<>;
+        std::tuple<Callbacks...> callbacks;
+        std::shared_ptr<handle> coro;
+        bool await_ready() const {
+            return std::apply([](auto & ...values) {
+                return (values.self.await_ready() || ...);
+            }, callbacks);
+        }
+        void await_suspend(handle c) {
+            coro = std::make_shared<handle>(c);
+            std::apply([this](auto & ...values) {
+                (values.self._suspend(coro), ...);
+            }, callbacks);
+        }
+        void await_resume() {
+            tuple2callback(callbacks, std::index_sequence_for<Callbacks...>{});
+        }
+    };
+    return awaitable{std::make_tuple(std::move(callbacks)...)};
 }

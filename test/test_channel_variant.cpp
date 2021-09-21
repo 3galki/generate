@@ -17,6 +17,7 @@ func test(out1 <-chan int, out2 <-chan string) {
 }
 */
 
+namespace {
 /* Аналог на variant */
 task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
     while (true) {
@@ -33,7 +34,7 @@ task coroutine(channel<int>::out out1, channel<std::string>::out out2) {
 }
 
 task writer_int(channel<int>::in in) {
-    for (int i = 1; i<3; ++i) {
+    for (int i = 1; i < 3; ++i) {
         co_await in << i;
         std::cout << "    push int    " << i << std::endl;
     }
@@ -41,12 +42,13 @@ task writer_int(channel<int>::in in) {
 }
 
 task writer_string(channel<std::string>::in in) {
-    for (int i = 1; i<3; ++i) {
+    for (int i = 1; i < 3; ++i) {
         co_await in << std::to_string(i);
         std::cout << "    push string " << i << std::endl;
     }
     in.close();
 }
+} // end of namespace
 
 TEST_CASE("variant", "[simple]") {
     channel<int> channel_int{1};
