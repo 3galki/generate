@@ -120,7 +120,7 @@ private:
         while (!m_out_queue.empty()) {
             auto ptr = pop(m_out_queue);
             if (auto coro = std::get_if<handle>(&ptr); coro != nullptr) {
-                coro->resume();
+                Scheduler::post([coro = *coro] () mutable { coro.resume(); });
                 break;
             } else if (auto coro = std::get<std::weak_ptr<handle>>(ptr).lock(); coro != nullptr && *coro != nullptr) {
                 auto c = *coro;
