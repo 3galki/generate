@@ -189,7 +189,13 @@ auto select(Callbacks ...callbacks) {
         }
         void await_resume() {
             std::apply([](auto & ...values) {
-                return (values.self.callback(values.callback) || ...);
+                return ([] (auto &value) {
+                    if (value.self.await_ready()) {
+                        value.callback(value.self.await_resume());
+                        return true;
+                    }
+                    return false;
+                }(values) || ...);
             }, callbacks);
         }
     };
