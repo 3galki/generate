@@ -76,10 +76,9 @@ public:
             return false;
         }
 
-        template <size_t Index, typename Tuple>
-        bool callback(Tuple &v) {
+        bool callback(std::function<void(value_type)> &callback) {
             if (await_ready()) {
-                std::get<Index>(v).callback(await_resume());
+                callback(await_resume());
                 return true;
             }
             return false;
@@ -171,11 +170,6 @@ auto select(Channels ...channels) {
     return awaitable{std::make_tuple(channels...)};
 }
 
-template<class Tuple, std::size_t... Is>
-void tuple2callback(Tuple& t, std::index_sequence<Is...>) {
-    (std::get<Is>(t).self.template callback<Is>(t) || ...);
-}
-
 template <typename ...Callbacks>
 auto select(Callbacks ...callbacks) {
     struct [[nodiscard]] awaitable {
@@ -194,7 +188,9 @@ auto select(Callbacks ...callbacks) {
             }, callbacks);
         }
         void await_resume() {
-            tuple2callback(callbacks, std::index_sequence_for<Callbacks...>{});
+            std::apply([](auto & ...values) {
+                return (values.self.callback(values.callback) || ...);
+            }, callbacks);
         }
     };
     return awaitable{std::make_tuple(std::move(callbacks)...)};
