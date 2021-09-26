@@ -4,6 +4,10 @@
 #include <queue>
 #include <variant>
 
+namespace std {
+using namespace experimental;
+} // end of namespace std
+
 template <typename Container>
 auto pop(Container &container) -> typename Container::value_type {
     auto value = std::move(container.front());
@@ -17,10 +21,12 @@ struct default_scheduler {
     }
 };
 
+using channel_id = void *;
+
 template <typename Type, typename Scheduler = default_scheduler>
 class channel {
 public:
-    using handle = std::experimental::coroutine_handle<>;
+    using handle = std::coroutine_handle<>;
     using value_type = Type;
 
     class in {
@@ -92,6 +98,9 @@ public:
             };
             return helper{std::move(callback), *this};
         }
+
+        channel_id id() const noexcept { return reinterpret_cast<channel_id>(m_self); }
+
     private:
         explicit out(channel *self) noexcept : m_self{self} {}
         channel *m_self;
@@ -143,10 +152,79 @@ concept channel_out = requires(Type T) {
     { T.await_ready() };
 };
 
+template <typename T, typename... Ts>
+struct filter_duplicates { using type = T; };
+
+template <template <typename...> class C, typename... Ts, typename U, typename... Us>
+struct filter_duplicates<C<Ts...>, U, Us...>
+        : std::conditional_t<(std::is_same_v<U, Ts> || ...)
+                , filter_duplicates<C<Ts...>, Us...>
+                , filter_duplicates<C<Ts..., U>, Us...>> {};
+
+template <typename T>
+struct unique_variant;
+
+template <typename... Ts>
+struct unique_variant<std::variant<Ts...>> : filter_duplicates<std::variant<>, Ts...> {};
+
+template <typename T>
+using unique_variant_t = typename unique_variant<T>::type;
+
+template <typename ...Channels>
+struct select_result {
+    unique_variant_t<std::variant<typename Channels::value_type ...>> value;
+    channel_id channel;
+    template <channel_out Channel>
+    auto get_if(const Channel &c) -> typename Channel::value_type * {
+        if (c.id() == channel) {
+            return &std::get<typename Channel::value_type>(value);
+        }
+        return nullptr;
+    }
+};
+
+template <channel_out ...Channels>
+auto s(Channels ...channels) {
+    struct [[nodiscard]] awaitable {
+        using handle = std::coroutine_handle<>;
+        std::tuple<Channels...> channels;
+        std::shared_ptr<handle> coro;
+
+        bool await_ready() const {
+            return std::apply([](auto &...values) {
+                return (values.await_ready() || ...);
+            }, channels);
+        }
+
+        void await_suspend(handle c) {
+            coro = std::make_shared<handle>(c);
+            std::apply([this](auto &...values) {
+                (values._suspend(coro), ...);
+            }, channels);
+        }
+
+        auto await_resume() {
+            select_result<Channels...> result;
+            std::apply([&result](auto & ...values) {
+                return ([&result] <typename Type> (Type &value) {
+                    if (value.await_ready()) {
+                        result.value.template emplace<typename Type::value_type>(value.await_resume());
+                        result.channel = value.id();
+                        return true;
+                    }
+                    return false;
+                }(values) || ...);
+            }, channels);
+            return std::move(result);
+        }
+    };
+    return awaitable{std::make_tuple(channels...)};
+}
+
 template <channel_out ...Channels>
 auto select(Channels ...channels) {
     struct [[nodiscard]] awaitable {
-        using handle = std::experimental::coroutine_handle<>;
+        using handle = std::coroutine_handle<>;
         std::tuple<Channels...> channels;
         std::shared_ptr<handle> coro;
         bool await_ready() const {
@@ -173,7 +251,7 @@ auto select(Channels ...channels) {
 template <typename ...Callbacks>
 auto select(Callbacks ...callbacks) {
     struct [[nodiscard]] awaitable {
-        using handle = std::experimental::coroutine_handle<>;
+        using handle = std::coroutine_handle<>;
         std::tuple<Callbacks...> callbacks;
         std::shared_ptr<handle> coro;
         bool await_ready() const {

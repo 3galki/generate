@@ -2,15 +2,19 @@
 #include <experimental/coroutine>
 #include <variant>
 
+namespace std {
+using namespace experimental;
+} // end of namespace std
+
 template <typename Value>
 class generator {
 public:
     using value_type = Value;
     using ref = value_type &;
     struct promise_type {
-        using handle = std::experimental::coroutine_handle<promise_type>;
-        using suspend_always = std::experimental::suspend_always;
-        using suspend_never = std::experimental::suspend_never;
+        using handle = std::coroutine_handle<promise_type>;
+        using suspend_always = std::suspend_always;
+        using suspend_never = std::suspend_never;
         std::variant<std::monostate, Value, std::exception_ptr> value;
         auto get_return_object() noexcept {
             return generator{handle::from_promise(*this)};
